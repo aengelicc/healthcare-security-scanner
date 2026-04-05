@@ -1,0 +1,74 @@
+rules:
+  # RULE 1: Hardcoded Credentials (Regex-based)
+  - id: hardcoded-credentials-all-languages
+    pattern-regex: '(?i)(api[_-]?key|secret[_-]?key|password|token|auth|private[_-]?key|access[_-]?key)\s*[:=]\s*["\x27][^"\x27]{8,}["\x27]'
+    languages: [python, javascript, typescript, java, go]
+    severity: ERROR
+    message: "Hardcoded credential detected. Use environment variables or a secrets manager."
+    metadata:
+      category: security
+      cwe: CWE-798
+      impact: "Critical: Unauthorized access to patient records"
+      hipaa_reference: "§164.312(d) Integrity Controls"
+
+  # RULE 2: Unencrypted HTTP Request
+  - id: unencrypted-http-request
+    pattern-regex: '["\x27]http://[^"\x27]+["\x27]'
+    languages: [python, javascript, typescript, java, go]
+    severity: ERROR
+    message: "PHI transmitted over unencrypted HTTP. Enforce HTTPS (TLS 1.2+)."
+    metadata:
+      category: security
+      cwe: CWE-319
+      impact: "High: Patient data interception"
+      hipaa_reference: "§164.312(e)(1) Transmission Security"
+
+  # RULE 3: Insecure Deserialization (Pickle)
+  - id: insecure-deserialization-pickle
+    patterns:
+      - pattern-either:
+          - pattern: pickle.loads($DATA)
+          - pattern: pickle.load($FILE)
+    message: "Unsafe deserialization. Use JSON or safe serialization formats."
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: CWE-502
+      impact: "Critical: Server compromise"
+      hipaa_reference: "§164.308(a)(1) Administrative Safeguards"
+
+  # RULE 4: SQL Injection (String Formatting) - SIMPLIFIED
+  - id: potential-sql-injection-string-formatting
+    patterns:
+      - pattern-either:
+          # Old-style % formatting
+          - pattern: |
+              $QUERY = "...%s..." % $INPUT
+          - pattern: |
+              cursor.execute("...%s..." % $INPUT)
+          # Concatenation
+          - pattern: |
+              $QUERY = "..." + $INPUT
+          - pattern: |
+              cursor.execute("..." + $INPUT)
+    message: "SQL Injection risk. Use parameterized queries."
+    languages: [python]
+    severity: HIGH
+    metadata:
+      category: security
+      cwe: CWE-89
+      impact: "Critical: Data theft or modification"
+      hipaa_reference: "§164.312(a)(1) Access Control"
+
+  # RULE 5: Weak Random Generation
+  - id: weak-random-generation
+    pattern-regex: 'random\.(random|randint|choice|shuffle)\s*\('
+    languages: [python]
+    severity: MEDIUM
+    message: "Use 'secrets' module for cryptographic randomness."
+    metadata:
+      category: security
+      cwe: CWE-330
+      impact: "Medium: Session hijacking"
+      hipaa_reference: "§164.312(a)(1) Access Control"
