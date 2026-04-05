@@ -1,5 +1,5 @@
 rules:
-  # RULE 1: Hardcoded Credentials (Regex-based)
+  # RULE 1: Hardcoded Credentials
   - id: hardcoded-credentials-all-languages
     pattern-regex: '(?i)(api[_-]?key|secret[_-]?key|password|token|auth|private[_-]?key|access[_-]?key)\s*[:=]\s*["\x27][^"\x27]{8,}["\x27]'
     languages: [python, javascript, typescript, java, go]
@@ -10,6 +10,9 @@ rules:
       cwe: CWE-798
       impact: "Critical: Unauthorized access to patient records"
       hipaa_reference: "§164.312(d) Integrity Controls"
+      hipaa_subsection: "Access Control - Authentication"
+      remediation_priority: "Immediate"
+      max_remediation_days: 7
 
   # RULE 2: Unencrypted HTTP Request
   - id: unencrypted-http-request
@@ -22,6 +25,9 @@ rules:
       cwe: CWE-319
       impact: "High: Patient data interception"
       hipaa_reference: "§164.312(e)(1) Transmission Security"
+      hipaa_subsection: "Encryption and Decryption"
+      remediation_priority: "Immediate"
+      max_remediation_days: 7
 
   # RULE 3: Insecure Deserialization (Pickle)
   - id: insecure-deserialization-pickle
@@ -37,17 +43,18 @@ rules:
       cwe: CWE-502
       impact: "Critical: Server compromise"
       hipaa_reference: "§164.308(a)(1) Administrative Safeguards"
+      hipaa_subsection: "Information System Activity Review"
+      remediation_priority: "Immediate"
+      max_remediation_days: 7
 
-  # RULE 4: SQL Injection (String Formatting) - SIMPLIFIED
+  # RULE 4: SQL Injection (String Formatting)
   - id: potential-sql-injection-string-formatting
     patterns:
       - pattern-either:
-          # Old-style % formatting
           - pattern: |
               $QUERY = "...%s..." % $INPUT
           - pattern: |
               cursor.execute("...%s..." % $INPUT)
-          # Concatenation
           - pattern: |
               $QUERY = "..." + $INPUT
           - pattern: |
@@ -60,6 +67,9 @@ rules:
       cwe: CWE-89
       impact: "Critical: Data theft or modification"
       hipaa_reference: "§164.312(a)(1) Access Control"
+      hipaa_subsection: "Unique User Identification"
+      remediation_priority: "High"
+      max_remediation_days: 14
 
   # RULE 5: Weak Random Generation
   - id: weak-random-generation
@@ -72,3 +82,6 @@ rules:
       cwe: CWE-330
       impact: "Medium: Session hijacking"
       hipaa_reference: "§164.312(a)(1) Access Control"
+      hipaa_subsection: "Authentication"
+      remediation_priority: "Medium"
+      max_remediation_days: 30

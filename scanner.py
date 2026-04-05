@@ -3,6 +3,7 @@
 Healthcare Code Security Scanner
 Generates PDF/Word reports from Semgrep findings
 Supports local directories AND GitHub repositories
+Includes HIPAA Compliance Mapping
 """
 
 import json
@@ -17,7 +18,6 @@ from typing import Any, Dict, List, Optional
 
 try:
     from docx import Document
-    from docx.enum.style import WD_STYLE_TYPE
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.shared import Inches, Pt, RGBColor
 
@@ -62,7 +62,6 @@ class SecurityScanner:
     def run_semgrep(self, target_path: str, output_format: str = "json") -> bool:
         """Execute Semgrep scan and capture results via temp file"""
         try:
-            # Create a temporary file to store JSON output
             with tempfile.NamedTemporaryFile(
                 mode="w+", delete=False, suffix=".json", encoding="utf-8"
             ) as tmp_file:
@@ -88,20 +87,16 @@ class SecurityScanner:
                 timeout=300,
             )
 
-            # Read the file content
             if not os.path.exists(temp_path) or os.path.getsize(temp_path) == 0:
                 print(
                     f"Error: Temp file empty or missing. Return code: {result.returncode}"
                 )
-                if result.stderr:
-                    print(f"Semgrep stderr: {result.stderr[:500]}")
                 os.unlink(temp_path)
                 return False
 
             with open(temp_path, "r", encoding="utf-8") as f:
                 output = f.read()
 
-            # Clean up temp file
             os.unlink(temp_path)
 
             if not output.strip():
@@ -120,11 +115,8 @@ class SecurityScanner:
                 return True
 
             data = json.loads(output)
-
-            # Extract findings
             self.findings = data.get("results", [])
 
-            # Count severities
             critical = high = medium = low = 0
             for finding in self.findings:
                 severity = finding.get("extra", {}).get("severity", "")
@@ -148,8 +140,7 @@ class SecurityScanner:
                 "low": low,
             }
 
-            # Debug
-            print(f"\n🔍 DEBUG: Found {len(self.findings)} findings")
+            print(f"\nDEBUG: Found {len(self.findings)} findings")
             if self.findings:
                 f = self.findings[0]
                 print(f"   Check ID: {f.get('check_id')}")
@@ -174,27 +165,20 @@ class SecurityScanner:
             return None
 
         try:
-            print(f"\n📥 Cloning repository: {repo_url}")
+            print(f"\nCloning repository: {repo_url}")
 
-            # Create temp directory for clone
             temp_dir = tempfile.mkdtemp(prefix="healthcare_scan_")
             repo_name = repo_url.split("/")[-1].replace(".git", "")
             clone_path = os.path.join(temp_dir, repo_name)
 
-            # Authenticate if token provided
             if token:
                 g = Github(token)
                 repo = g.get_repo(repo_url.replace("https://github.com/", ""))
-                # Get clone URL with token embedded
                 clone_url = f"https://{token}@github.com/{repo.full_name}.git"
             else:
-                # Public repo - no auth needed
                 if not repo_url.endswith(".git"):
                     repo_url = repo_url + ".git"
                 clone_url = repo_url
-
-            # Clone using git command (more reliable than PyGithub for large repos)
-            import subprocess
 
             result = subprocess.run(
                 ["git", "clone", "--depth", "1", clone_url, clone_path],
@@ -208,7 +192,7 @@ class SecurityScanner:
                 shutil.rmtree(temp_dir, ignore_errors=True)
                 return None
 
-            print(f"✅ Repository cloned to: {clone_path}")
+            print(f"Repository cloned to: {clone_path}")
             return clone_path
 
         except Exception as e:
@@ -224,7 +208,7 @@ class SecurityScanner:
             print(f"Error: Path not found: {target_path}")
             return False
 
-        print(f"\n🔍 Scanning local path: {target_path}")
+        print(f"\nScanning local path: {target_path}")
         return self.run_semgrep(target_path)
 
     def scan_github_repo(self, repo_url: str, token: Optional[str] = None) -> bool:
@@ -233,16 +217,13 @@ class SecurityScanner:
             print("Error: PyGithub not installed. Run: pip install PyGithub")
             return False
 
-        # Clone the repository
         clone_path = self.clone_github_repo(repo_url, token)
         if not clone_path:
             return False
 
         try:
-            # Scan the cloned repository
             success = self.run_semgrep(clone_path)
 
-            # Store repo info for reporting
             self.repo_info = {
                 "url": repo_url,
                 "cloned_path": clone_path,
@@ -252,12 +233,36 @@ class SecurityScanner:
             return success
 
         finally:
-            # Clean up: remove cloned repository
-            print(f"\n🧹 Cleaning up temporary files...")
+            print(f"\nCleaning up temporary files...")
             shutil.rmtree(clone_path, ignore_errors=True)
 
+    def calculate_risk_score(self) -> tuple:
+        """Calculate compliance risk score and level"""
+        total_score = 0
+        for finding in self.findings:
+            severity = finding.get("extra", {}).get("severity", "")
+            if severity == "ERROR":
+                total_score += 10
+            elif severity == "HIGH":
+                total_score += 7
+            elif severity == "MEDIUM":
+                total_score += 4
+            elif severity == "LOW":
+                total_score += 1
+
+        if total_score >= 20:
+            level = "CRITICAL"
+        elif total_score >= 10:
+            level = "HIGH"
+        elif total_score >= 5:
+            level = "MEDIUM"
+        else:
+            level = "LOW"
+
+        return total_score, level
+
     def generate_word_report(self, output_path: str) -> bool:
-        """Generate Microsoft Word report"""
+        """Generate Microsoft Word report with HIPAA compliance mapping"""
         if not HAS_DOCX:
             print("Error: python-docx not installed")
             return False
@@ -293,100 +298,154 @@ class SecurityScanner:
         doc.add_heading("Risk Assessment", level=1)
         if self.scan_metadata["critical"] > 0:
             doc.add_paragraph(
-                "⚠️ CRITICAL: Immediate action required. Patient data may be at risk."
+                "CRITICAL: Immediate action required. Patient data may be at risk."
             )
         elif self.scan_metadata["high"] > 0:
             doc.add_paragraph(
-                "⚡ HIGH: Significant vulnerabilities detected. Remediation recommended before deployment."
+                "HIGH: Significant vulnerabilities detected. Remediation recommended before deployment."
             )
         else:
-            doc.add_paragraph("✓ LOW RISK: No critical vulnerabilities detected.")
+            doc.add_paragraph("LOW RISK: No critical vulnerabilities detected.")
 
-        # HIPAA Compliance Summary
+        # HIPAA Compliance Overview
         doc.add_heading("HIPAA Compliance Overview", level=1)
-        compliance_sections = set()
+
+        hipaa_sections = {}
         for finding in self.findings:
             hipaa_ref = (
                 finding.get("extra", {}).get("metadata", {}).get("hipaa_reference", "")
             )
+            hipaa_sub = (
+                finding.get("extra", {}).get("metadata", {}).get("hipaa_subsection", "")
+            )
             if hipaa_ref:
-                compliance_sections.add(hipaa_ref)
+                if hipaa_ref not in hipaa_sections:
+                    hipaa_sections[hipaa_ref] = {"subsection": hipaa_sub, "count": 0}
+                hipaa_sections[hipaa_ref]["count"] += 1
 
-        if compliance_sections:
-            for section in sorted(compliance_sections):
-                doc.add_paragraph(f"• Affected: {section}")
-        else:
-            doc.add_paragraph("No HIPAA-specific rules triggered.")
+        if hipaa_sections:
+            table_data = [["HIPAA Section", "Subsection", "Findings", "Status"]]
+            for section, data in sorted(hipaa_sections.items()):
+                status = "Non-Compliant" if data["count"] > 0 else "Compliant"
+                table_data.append(
+                    [section, data["subsection"], str(data["count"]), status]
+                )
 
-        # Findings Table
-        doc.add_heading("Detailed Findings", level=1)
-
-        if not self.findings:
-            doc.add_paragraph("No security vulnerabilities detected.")
-        else:
-            # Group findings by file
-            findings_by_file = {}
-            for finding in self.findings:
-                path = finding.get("path", "Unknown")
-                if path not in findings_by_file:
-                    findings_by_file[path] = []
-                findings_by_file[path].append(finding)
-
-            # Create table
-            table_data = [["File", "Line", "Rule ID", "Severity", "Message"]]
-            for path, file_findings in findings_by_file.items():
-                for finding in file_findings:
-                    start = finding.get("start", {})
-                    extra = finding.get("extra", {})
-                    table_data.append(
-                        [
-                            path,
-                            str(start.get("line", "N/A")),
-                            finding.get("check_id", "Unknown"),
-                            extra.get("severity", "Unknown"),
-                            extra.get("message", "No message")[:50] + "...",
-                        ]
-                    )
-
-            table = doc.add_table(rows=1, cols=5)
+            table = doc.add_table(rows=1, cols=4)
             table.style = "Table Grid"
             hdr_cells = table.rows[0].cells
-            hdr_cells[0].text = "File"
-            hdr_cells[1].text = "Line"
-            hdr_cells[2].text = "Rule ID"
-            hdr_cells[3].text = "Severity"
-            hdr_cells[4].text = "Message"
+            hdr_cells[0].text = "HIPAA Section"
+            hdr_cells[1].text = "Subsection"
+            hdr_cells[2].text = "Findings"
+            hdr_cells[3].text = "Status"
 
-            # Populate table
             for row_data in table_data[1:]:
                 row = table.add_row().cells
                 for i, cell_text in enumerate(row_data):
                     row[i].text = cell_text
+        else:
+            doc.add_paragraph("No HIPAA-specific rules triggered.")
 
-        # Remediation Recommendations
-        doc.add_heading("Remediation Recommendations", level=1)
+        # Compliance Checklist
+        doc.add_heading("HIPAA Compliance Checklist", level=1)
+        checklist_items = [
+            (
+                "164.308(a)(1)",
+                "Administrative Safeguards - Security Management Process",
+            ),
+            ("164.310(a)(1)", "Physical Safeguards - Facility Access Controls"),
+            ("164.312(a)(1)", "Technical Safeguards - Access Control"),
+            ("164.312(d)", "Technical Safeguards - Integrity Controls"),
+            ("164.312(e)(1)", "Technical Safeguards - Transmission Security"),
+        ]
 
-        recommendations = {
-            "ERROR": "CRITICAL: Address immediately. These vulnerabilities pose direct risk to patient data.",
-            "HIGH": "HIGH PRIORITY: Remediate before production deployment.",
-            "MEDIUM": "MEDIUM PRIORITY: Schedule for next sprint.",
-            "LOW": "LOW PRIORITY: Address during routine maintenance.",
-        }
+        checklist_table = doc.add_table(rows=1, cols=3)
+        checklist_table.style = "Table Grid"
+        hdr = checklist_table.rows[0].cells
+        hdr[0].text = "Section"
+        hdr[1].text = "Requirement"
+        hdr[2].text = "Status"
 
-        for severity, rec in recommendations.items():
-            count = self.scan_metadata.get(severity.lower(), 0)
-            if count > 0:
-                p = doc.add_paragraph()
-                p.add_run(f"{severity} ({count} findings): ").bold = True
-                p.add_run(rec)
+        for section, requirement in checklist_items:
+            has_findings = any(section in hipaa_sections for section in [section])
+            status = "Non-Compliant" if has_findings else "Compliant"
+            row = checklist_table.add_row().cells
+            row[0].text = section
+            row[1].text = requirement
+            row[2].text = status
 
-        # Save
+        # Risk Score Calculation
+        doc.add_heading("Compliance Risk Score", level=1)
+        total_score, risk_level = self.calculate_risk_score()
+
+        score_p = doc.add_paragraph()
+        score_p.add_run(f"Total Risk Score: {total_score}").bold = True
+        score_p.add_run(f" (Level: {risk_level})")
+
+        # Remediation Timeline
+        doc.add_heading("Remediation Timeline", level=1)
+        timeline = {}
+        for finding in self.findings:
+            priority = (
+                finding.get("extra", {})
+                .get("metadata", {})
+                .get("remediation_priority", "Medium")
+            )
+            days = (
+                finding.get("extra", {})
+                .get("metadata", {})
+                .get("max_remediation_days", 30)
+            )
+            if priority not in timeline:
+                timeline[priority] = {"days": days, "count": 0}
+            timeline[priority]["count"] += 1
+
+        for priority, data in sorted(timeline.items(), key=lambda x: x[1]["days"]):
+            doc.add_paragraph(
+                f"{priority}: {data['count']} findings - Remediate within {data['days']} days"
+            )
+
+        # Detailed Findings
+        doc.add_heading("Detailed Findings with HIPAA Mapping", level=1)
+
+        if not self.findings:
+            doc.add_paragraph("No security vulnerabilities detected.")
+        else:
+            for i, finding in enumerate(self.findings, 1):
+                start = finding.get("start", {})
+                extra = finding.get("extra", {})
+                metadata = extra.get("metadata", {})
+
+                doc.add_heading(
+                    f"Finding #{i}: {finding.get('check_id', 'Unknown')}", level=2
+                )
+                doc.add_paragraph(f"File: {finding.get('path', 'Unknown')}")
+                doc.add_paragraph(f"Line: {start.get('line', 'N/A')}")
+                doc.add_paragraph(f"Severity: {extra.get('severity', 'Unknown')}")
+                doc.add_paragraph(f"Message: {extra.get('message', 'No message')}")
+
+                doc.add_paragraph("HIPAA Compliance:")
+                doc.add_paragraph(
+                    f"- Section: {metadata.get('hipaa_reference', 'N/A')}"
+                )
+                doc.add_paragraph(
+                    f"- Subsection: {metadata.get('hipaa_subsection', 'N/A')}"
+                )
+                doc.add_paragraph(
+                    f"- Priority: {metadata.get('remediation_priority', 'Medium')}"
+                )
+                doc.add_paragraph(
+                    f"- Max Days: {metadata.get('max_remediation_days', 30)}"
+                )
+
+                doc.add_paragraph("-" * 50)
+
         doc.save(output_path)
         print(f"Word report saved to: {output_path}")
         return True
 
     def generate_pdf_report(self, output_path: str) -> bool:
-        """Generate PDF report using ReportLab"""
+        """Generate PDF report with HIPAA compliance mapping"""
         if not HAS_REPORTLAB:
             print("Error: reportlab not installed")
             return False
@@ -442,43 +501,56 @@ class SecurityScanner:
         if self.scan_metadata["critical"] > 0:
             story.append(
                 Paragraph(
-                    "⚠️ <b>CRITICAL:</b> Immediate action required. Patient data may be at risk.",
+                    "CRITICAL: Immediate action required. Patient data may be at risk.",
                     styles["Normal"],
                 )
             )
         elif self.scan_metadata["high"] > 0:
             story.append(
                 Paragraph(
-                    "⚡ <b>HIGH:</b> Significant vulnerabilities detected.",
-                    styles["Normal"],
+                    "HIGH: Significant vulnerabilities detected.", styles["Normal"]
                 )
             )
         else:
             story.append(
                 Paragraph(
-                    "✓ <b>LOW RISK:</b> No critical vulnerabilities detected.",
-                    styles["Normal"],
+                    "LOW RISK: No critical vulnerabilities detected.", styles["Normal"]
                 )
             )
         story.append(Spacer(1, 20))
 
-        # HIPAA Compliance
+        # HIPAA Compliance Overview
         story.append(Paragraph("<b>HIPAA Compliance Overview</b>", styles["Heading2"]))
-        compliance_sections = set()
+
+        hipaa_sections = {}
         for finding in self.findings:
             hipaa_ref = (
                 finding.get("extra", {}).get("metadata", {}).get("hipaa_reference", "")
             )
             if hipaa_ref:
-                compliance_sections.add(hipaa_ref)
+                if hipaa_ref not in hipaa_sections:
+                    hipaa_sections[hipaa_ref] = 0
+                hipaa_sections[hipaa_ref] += 1
 
-        if compliance_sections:
-            for section in sorted(compliance_sections):
-                story.append(Paragraph(f"• Affected: {section}", styles["Normal"]))
+        if hipaa_sections:
+            for section, count in sorted(hipaa_sections.items()):
+                story.append(
+                    Paragraph(f"- {section}: {count} findings", styles["Normal"])
+                )
         else:
             story.append(
                 Paragraph("No HIPAA-specific rules triggered.", styles["Normal"])
             )
+        story.append(Spacer(1, 20))
+
+        # Risk Score
+        total_score, risk_level = self.calculate_risk_score()
+        story.append(
+            Paragraph(
+                f"<b>Compliance Risk Score:</b> {total_score} (Level: {risk_level})",
+                styles["Heading3"],
+            )
+        )
         story.append(Spacer(1, 20))
 
         # Findings
@@ -555,10 +627,8 @@ def main():
     print("Healthcare Code Security Scanner")
     print("=" * 60)
 
-    # Initialize scanner
     scanner = SecurityScanner(rules_file=args.rules)
 
-    # Determine if GitHub or local
     is_github = False
     if not args.local and (
         args.target.startswith("http") or args.target.startswith("git@")
@@ -566,38 +636,35 @@ def main():
         is_github = True
 
     if is_github:
-        print(f"\n🔗 Target: GitHub Repository")
-        print(f"📋 Rules: {args.rules}")
+        print(f"\nTarget: GitHub Repository")
+        print(f"Rules: {args.rules}")
 
         if not scanner.scan_github_repo(args.target, args.github_token):
-            print("❌ GitHub scan failed!")
+            print("GitHub scan failed!")
             sys.exit(1)
     else:
-        print(f"\n🔍 Target: Local Path")
-        print(f"📋 Rules: {args.rules}")
+        print(f"\nTarget: Local Path")
+        print(f"Rules: {args.rules}")
 
         if not scanner.scan_local_directory(args.target):
-            print("❌ Local scan failed!")
+            print("Local scan failed!")
             sys.exit(1)
 
-    print(
-        f"\n✅ Scan complete. Found {scanner.scan_metadata['total_findings']} issues:"
-    )
+    print(f"\nScan complete. Found {scanner.scan_metadata['total_findings']} issues:")
     print(f"   Critical: {scanner.scan_metadata['critical']}")
     print(f"   High: {scanner.scan_metadata['high']}")
     print(f"   Medium: {scanner.scan_metadata['medium']}")
     print(f"   Low: {scanner.scan_metadata['low']}")
 
-    # Generate reports
     if args.format in ["word", "both"]:
         word_path = f"{args.output}.docx"
         if scanner.generate_word_report(word_path):
-            print(f"\n📄 Word report: {word_path}")
+            print(f"\nWord report: {word_path}")
 
     if args.format in ["pdf", "both"]:
         pdf_path = f"{args.output}.pdf"
         if scanner.generate_pdf_report(pdf_path):
-            print(f"📑 PDF report: {pdf_path}")
+            print(f"PDF report: {pdf_path}")
 
     print("\n" + "=" * 60)
     print("Scan complete!")
