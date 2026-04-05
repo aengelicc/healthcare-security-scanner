@@ -85,3 +85,187 @@ rules:
       hipaa_subsection: "Authentication"
       remediation_priority: "Medium"
       max_remediation_days: 30
+
+  # --- JAVA RULES ---
+  # Java: Hardcoded Credentials
+  - id: java-hardcoded-credentials
+    pattern-regex: '(?i)(api[_-]?key|secret|password|token)\s*=\s*["\x27][^"\x27]{8,}["\x27]'
+    languages: [java]
+    severity: ERROR
+    message: "Hardcoded credential in Java. Use @Value or Environment variables."
+    metadata:
+      category: security
+      cwe: CWE-798
+      impact: "Critical: Unauthorized access"
+      hipaa_reference: "§164.312(d)"
+      remediation_priority: "Immediate"
+      max_remediation_days: 7
+
+  # Java: Insecure Deserialization (ObjectInputStream)
+  - id: java-insecure-deserialization
+    patterns:
+      - pattern: new ObjectInputStream($STREAM).readObject()
+    message: "Unsafe Java deserialization. Use JSON or validate object types."
+    languages: [java]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: CWE-502
+      impact: "Critical: Remote Code Execution"
+      hipaa_reference: "§164.308(a)(1)"
+      remediation_priority: "Immediate"
+      max_remediation_days: 7
+
+  # --- C# (.NET) RULES ---
+  # C#: Hardcoded Credentials
+  - id: csharp-hardcoded-credentials
+    pattern-regex: '(?i)(api[_-]?key|connection[_-]?string|password)\s*=\s*["\x27][^"\x27]{8,}["\x27]'
+    languages: [csharp]
+    severity: ERROR
+    message: "Hardcoded credential in C#. Use IConfiguration or Secret Manager."
+    metadata:
+      category: security
+      cwe: CWE-798
+      impact: "Critical: Unauthorized access"
+      hipaa_reference: "§164.312(d)"
+      remediation_priority: "Immediate"
+      max_remediation_days: 7
+
+  # C#: SQL Injection (String Concatenation)
+  - id: csharp-sql-injection
+    patterns:
+      - pattern: |
+          $cmd.CommandText = "SELECT * FROM ... " + $input
+      - pattern: |
+          $cmd.CommandText = $$"SELECT * FROM ... {$$input}"
+    message: "SQL Injection risk in C#. Use SqlParameter."
+    languages: [csharp]
+    severity: HIGH
+    metadata:
+      category: security
+      cwe: CWE-89
+      impact: "Critical: Data theft"
+      hipaa_reference: "§164.312(a)(1)"
+      remediation_priority: "High"
+      max_remediation_days: 14
+
+  # --- JAVASCRIPT/TYPESCRIPT RULES ---
+  # JS: Hardcoded Credentials
+  - id: js-hardcoded-credentials
+    pattern-regex: '(?i)(api[_-]?key|secret|password|token)\s*[:=]\s*["\x27][^"\x27]{8,}["\x27]'
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "Hardcoded credential in JS/TS. Use process.env."
+    metadata:
+      category: security
+      cwe: CWE-798
+      impact: "Critical: Unauthorized access"
+      hipaa_reference: "§164.312(d)"
+      remediation_priority: "Immediate"
+      max_remediation_days: 7
+
+  # JS: Unencrypted HTTP
+  - id: js-unencrypted-http
+    pattern-regex: 'fetch\(["\x27]http://[^"\x27]+["\x27]'
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "Unencrypted HTTP request in JS. Use HTTPS."
+    metadata:
+      category: security
+      cwe: CWE-319
+      impact: "High: PHI Interception"
+      hipaa_reference: "§164.312(e)(1)"
+      remediation_priority: "Immediate"
+      max_remediation_days: 7
+
+  # ==================== JAVA RULES ====================
+  # Java: Hardcoded Credentials
+  - id: java-hardcoded-credentials
+    pattern-regex: '(?i)(api[_-]?key|secret|password|token)\s*=\s*["\x27][^"\x27]{8,}["\x27]'
+    languages: [java]
+    severity: ERROR
+    message: "Hardcoded credential in Java. Use @Value or Environment variables."
+    metadata:
+      category: security
+      cwe: CWE-798
+      impact: "Critical: Unauthorized access"
+      hipaa_reference: "§164.312(d)"
+      remediation_priority: "Immediate"
+      max_remediation_days: 7
+
+  # Java: Insecure Deserialization (ObjectInputStream)
+  - id: java-insecure-deserialization
+    patterns:
+      - pattern: new ObjectInputStream($STREAM).readObject()
+    message: "Unsafe Java deserialization. Use JSON or validate object types."
+    languages: [java]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: CWE-502
+      impact: "Critical: Remote Code Execution"
+      hipaa_reference: "§164.308(a)(1)"
+      remediation_priority: "Immediate"
+      max_remediation_days: 7
+
+  # ==================== C# (.NET) RULES ====================
+  # C#: Hardcoded Credentials
+  - id: csharp-hardcoded-credentials
+    pattern-regex: '(?i)(api[_-]?key|connection[_-]?string|password)\s*=\s*["\x27][^"\x27]{8,}["\x27]'
+    languages: [csharp]
+    severity: ERROR
+    message: "Hardcoded credential in C#. Use IConfiguration or Secret Manager."
+    metadata:
+      category: security
+      cwe: CWE-798
+      impact: "Critical: Unauthorized access"
+      hipaa_reference: "§164.312(d)"
+      remediation_priority: "Immediate"
+      max_remediation_days: 7
+
+  # C#: SQL Injection (String Concatenation)
+  - id: csharp-sql-injection
+    patterns:
+      - pattern: |
+          $cmd.CommandText = "SELECT * FROM ... " + $input
+      - pattern: |
+          $cmd.CommandText = $$"SELECT * FROM ... {$$input}"
+    message: "SQL Injection risk in C#. Use SqlParameter."
+    languages: [csharp]
+    severity: HIGH
+    metadata:
+      category: security
+      cwe: CWE-89
+      impact: "Critical: Data theft"
+      hipaa_reference: "§164.312(a)(1)"
+      remediation_priority: "High"
+      max_remediation_days: 14
+
+  # ==================== JAVASCRIPT/TYPESCRIPT RULES ====================
+  # JS: Hardcoded Credentials
+  - id: js-hardcoded-credentials
+    pattern-regex: '(?i)(api[_-]?key|secret|password|token)\s*[:=]\s*["\x27][^"\x27]{8,}["\x27]'
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "Hardcoded credential in JS/TS. Use process.env."
+    metadata:
+      category: security
+      cwe: CWE-798
+      impact: "Critical: Unauthorized access"
+      hipaa_reference: "§164.312(d)"
+      remediation_priority: "Immediate"
+      max_remediation_days: 7
+
+  # JS: Unencrypted HTTP
+  - id: js-unencrypted-http
+    pattern-regex: 'fetch\(["\x27]http://[^"\x27]+["\x27]'
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "Unencrypted HTTP request in JS. Use HTTPS."
+    metadata:
+      category: security
+      cwe: CWE-319
+      impact: "High: PHI Interception"
+      hipaa_reference: "§164.312(e)(1)"
+      remediation_priority: "Immediate"
+      max_remediation_days: 7
