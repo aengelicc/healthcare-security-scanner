@@ -3,7 +3,7 @@
 Healthcare Code Security Scanner
 Generates PDF/Word reports from Semgrep findings
 Supports local directories AND GitHub repositories
-Includes HIPAA Compliance Mapping
+Includes HIPAA Compliance Mapping and Automated Remediation
 """
 
 import json
@@ -15,6 +15,15 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+# Import remediation templates
+try:
+    from remediations import generate_remediation_section, get_remediation
+
+    HAS_REMEDIATIONS = True
+except ImportError:
+    HAS_REMEDIATIONS = False
+    print("Warning: remediations.py not found. Install remediation templates.")
 
 try:
     from docx import Document
@@ -262,7 +271,7 @@ class SecurityScanner:
         return total_score, level
 
     def generate_word_report(self, output_path: str) -> bool:
-        """Generate Microsoft Word report with HIPAA compliance mapping"""
+        """Generate Microsoft Word report with HIPAA compliance mapping and remediation"""
         if not HAS_DOCX:
             print("Error: python-docx not installed")
             return False
@@ -405,8 +414,8 @@ class SecurityScanner:
                 f"{priority}: {data['count']} findings - Remediate within {data['days']} days"
             )
 
-        # Detailed Findings
-        doc.add_heading("Detailed Findings with HIPAA Mapping", level=1)
+        # Detailed Findings with HIPAA Mapping and Remediation
+        doc.add_heading("Detailed Findings with HIPAA Mapping and Remediation", level=1)
 
         if not self.findings:
             doc.add_paragraph("No security vulnerabilities detected.")
@@ -415,16 +424,32 @@ class SecurityScanner:
                 start = finding.get("start", {})
                 extra = finding.get("extra", {})
                 metadata = extra.get("metadata", {})
+                rule_id = finding.get("check_id", "")
 
-                doc.add_heading(
-                    f"Finding #{i}: {finding.get('check_id', 'Unknown')}", level=2
+                # Get remediation template
+                remediation = (
+                    get_remediation(rule_id)
+                    if HAS_REMEDIATIONS
+                    else {
+                        "title": "General Remediation",
+                        "description": "Review and fix this issue.",
+                        "steps": ["Fix the issue manually."],
+                        "before": "N/A",
+                        "after": "N/A",
+                        "resources": [],
+                        "severity_impact": "Unknown",
+                    }
                 )
-                doc.add_paragraph(f"File: {finding.get('path', 'Unknown')}")
-                doc.add_paragraph(f"Line: {start.get('line', 'N/A')}")
-                doc.add_paragraph(f"Severity: {extra.get('severity', 'Unknown')}")
-                doc.add_paragraph(f"Message: {extra.get('message', 'No message')}")
 
-                doc.add_paragraph("HIPAA Compliance:")
+                # Finding Header
+                doc.add_heading(f"Finding #{i}: {rule_id}", level=2)
+                doc.add_paragraph(f"**File:** {finding.get('path', 'Unknown')}")
+                doc.add_paragraph(f"**Line:** {start.get('line', 'N/A')}")
+                doc.add_paragraph(f"**Severity:** {extra.get('severity', 'Unknown')}")
+                doc.add_paragraph(f"**Message:** {extra.get('message', 'No message')}")
+
+                # HIPAA Compliance
+                doc.add_paragraph("**HIPAA Compliance:**")
                 doc.add_paragraph(
                     f"- Section: {metadata.get('hipaa_reference', 'N/A')}"
                 )
@@ -438,6 +463,46 @@ class SecurityScanner:
                     f"- Max Days: {metadata.get('max_remediation_days', 30)}"
                 )
 
+                # Impact
+                doc.add_paragraph(
+                    f"**Impact:** {remediation.get('severity_impact', 'Unknown')}"
+                )
+
+                # Description
+                doc.add_paragraph("**Description:**")
+                doc.add_paragraph(
+                    remediation.get("description", "No description available.")
+                )
+
+                # Remediation Steps
+                doc.add_paragraph("**Remediation Steps:**")
+                steps = remediation.get("steps", [])
+                for j, step in enumerate(steps, 1):
+                    doc.add_paragraph(f"{j}. {step}", style="List Number")
+
+                # Before/After Code
+                doc.add_paragraph("**Code Example:**")
+                doc.add_paragraph("Before (Vulnerable):", style="Heading 3")
+
+                # Add code block for 'before'
+                before_para = doc.add_paragraph()
+                before_para.add_run(remediation.get("before", "N/A"))
+                before_para.style = "No Spacing"
+
+                doc.add_paragraph("After (Fixed):", style="Heading 3")
+
+                # Add code block for 'after'
+                after_para = doc.add_paragraph()
+                after_para.add_run(remediation.get("after", "N/A"))
+                after_para.style = "No Spacing"
+
+                # External Resources
+                resources = remediation.get("resources", [])
+                if resources:
+                    doc.add_paragraph("**Additional Resources:**")
+                    for title, url in resources:
+                        doc.add_paragraph(f"- [{title}]({url})", style="List Bullet")
+
                 doc.add_paragraph("-" * 50)
 
         doc.save(output_path)
@@ -445,7 +510,7 @@ class SecurityScanner:
         return True
 
     def generate_pdf_report(self, output_path: str) -> bool:
-        """Generate PDF report with HIPAA compliance mapping"""
+        """Generate PDF report with HIPAA compliance mapping and remediation"""
         if not HAS_REPORTLAB:
             print("Error: reportlab not installed")
             return False
@@ -553,8 +618,10 @@ class SecurityScanner:
         )
         story.append(Spacer(1, 20))
 
-        # Findings
-        story.append(Paragraph("<b>Detailed Findings</b>", styles["Heading2"]))
+        # Detailed Findings
+        story.append(
+            Paragraph("<b>Detailed Findings with Remediation</b>", styles["Heading2"])
+        )
 
         if not self.findings:
             story.append(
@@ -564,27 +631,65 @@ class SecurityScanner:
             for finding in self.findings:
                 start = finding.get("start", {})
                 extra = finding.get("extra", {})
-                severity = extra.get("severity", "Unknown")
-
-                story.append(
-                    Paragraph(
-                        f"<b>{finding.get('check_id', 'Unknown')}</b>",
-                        styles["Heading3"],
-                    )
+                rule_id = finding.get("check_id", "")
+                remediation = (
+                    get_remediation(rule_id)
+                    if HAS_REMEDIATIONS
+                    else {
+                        "description": "No description.",
+                        "steps": [],
+                        "before": "N/A",
+                        "after": "N/A",
+                        "severity_impact": "Unknown",
+                    }
                 )
+
+                story.append(Paragraph(f"<b>{rule_id}</b>", styles["Heading3"]))
                 story.append(
                     Paragraph(
                         f"File: {finding.get('path', 'Unknown')} | Line: {start.get('line', 'N/A')}",
                         styles["Normal"],
                     )
                 )
-                story.append(Paragraph(f"Severity: {severity}", styles["Normal"]))
                 story.append(
                     Paragraph(
-                        f"Message: {extra.get('message', 'No message')}",
+                        f"Severity: {extra.get('severity', 'Unknown')}",
                         styles["Normal"],
                     )
                 )
+                story.append(
+                    Paragraph(
+                        f"Impact: {remediation.get('severity_impact', 'Unknown')}",
+                        styles["Normal"],
+                    )
+                )
+
+                story.append(Paragraph("<b>Description:</b>", styles["Heading4"]))
+                story.append(
+                    Paragraph(remediation.get("description", "N/A"), styles["Normal"])
+                )
+
+                story.append(Paragraph("<b>Remediation Steps:</b>", styles["Heading4"]))
+                for step in remediation.get("steps", []):
+                    story.append(Paragraph(f"• {step}", styles["Normal"]))
+
+                story.append(Paragraph("<b>Code Example:</b>", styles["Heading4"]))
+                before_text = remediation.get("before", "N/A")
+                after_text = remediation.get("after", "N/A")
+                # Truncate long code for PDF readability
+                story.append(
+                    Paragraph(
+                        f"Before: {before_text[:100]}{'...' if len(before_text) > 100 else ''}",
+                        styles["Normal"],
+                    )
+                )
+                story.append(
+                    Paragraph(
+                        f"After: {after_text[:100]}{'...' if len(after_text) > 100 else ''}",
+                        styles["Normal"],
+                    )
+                )
+
                 story.append(Spacer(1, 10))
 
         doc.build(story)
