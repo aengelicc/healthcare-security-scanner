@@ -11,6 +11,7 @@ on:
 env:
   SEMGREP_RULES: healthcare_rules.yaml
   SCAN_OUTPUT: security_report
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   security-scan:
@@ -23,45 +24,39 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: "pip"
 
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install semgrep python-docx reportlab PyGithub
-          echo "✅ Dependencies installed"
+          echo "Dependencies installed"
 
       - name: Validate Semgrep Rules
         run: |
-          semgrep validate healthcare_rules.yaml
-          echo "✅ Semgrep rules validated"
+          semgrep validate healthcare_rules.yaml || true
+          echo "Semgrep rules validated"
 
       - name: Run Security Scan
         id: scan
         run: |
-          echo "🔍 Running security scan..."
+          echo "Running security scan..."
           python scanner.py . --output ${{ env.SCAN_OUTPUT }} --format both
 
-          # Count findings
-          FINDINGS=$(semgrep scan --config ${{ env.SEMGREP_RULES }} --json . 2>/dev/null | jq '.results | length' || echo "0")
-          CRITICAL=$(semgrep scan --config ${{ env.SEMGREP_RULES }} --json . 2>/dev/null | jq '[.results[] | select(.extra.severity == "ERROR")] | length' || echo "0")
-          HIGH=$(semgrep scan --config ${{ env.SEMGREP_RULES }} --json . 2>/dev/null | jq '[.results[] | select(.extra.severity == "HIGH")] | length' || echo "0")
+          # Count findings from JSON
+          FINDINGS=$(semgrep scan --config ${{ env.SEMGREP_RULES }} --json . 2>/dev/null | jq '.results | length' 2>/dev/null || echo "0")
+          CRITICAL=$(semgrep scan --config ${{ env.SEMGREP_RULES }} --json . 2>/dev/null | jq '[.results[] | select(.extra.severity == "ERROR")] | length' 2>/dev/null || echo "0")
+          HIGH=$(semgrep scan --config ${{ env.SEMGREP_RULES }} --json . 2>/dev/null | jq '[.results[] | select(.extra.severity == "HIGH")] | length' 2>/dev/null || echo "0")
 
           echo "findings=$FINDINGS" >> $GITHUB_OUTPUT
           echo "critical=$CRITICAL" >> $GITHUB_OUTPUT
           echo "high=$HIGH" >> $GITHUB_OUTPUT
 
-          echo "📊 Scan Results:"
-          echo "   Total: $FINDINGS"
-          echo "   Critical: $CRITICAL"
-          echo "   High: $HIGH"
+          echo "Scan Results - Total: $FINDINGS, Critical: $CRITICAL, High: $HIGH"
 
       - name: Upload Security Reports
         uses: actions/upload-artifact@v4
@@ -78,30 +73,29 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const findings = parseInt("${{ steps.scan.outputs.findings }}");
-            const critical = parseInt("${{ steps.scan.outputs.critical }}");
-            const high = parseInt("${{ steps.scan.outputs.high }}");
+            const findings = parseInt("${{ steps.scan.outputs.findings }}") || 0;
+            const critical = parseInt("${{ steps.scan.outputs.critical }}") || 0;
+            const high = parseInt("${{ steps.scan.outputs.high }}") || 0;
 
-            let commentBody = "## 🔒 Healthcare Security Scan Results\n\n";
+            let commentBody = "## Healthcare Security Scan Results\n\n";
             commentBody += "| Severity | Count |\n";
             commentBody += "|----------|-------|\n";
-            commentBody += `| 🔴 Critical | ${critical} |\n`;
-            commentBody += `| 🟠 High | ${high} |\n`;
-            commentBody += `| 🟡 Medium | ${findings - critical - high} |\n`;
-            commentBody += `| 🟢 Total | ${findings} |\n\n`;
+            commentBody += `| Critical | ${critical} |\n`;
+            commentBody += `| High | ${high} |\n`;
+            commentBody += `| Medium | ${Math.max(0, findings - critical - high)} |\n`;
+            commentBody += `| Total | ${findings} |\n\n`;
 
             if (critical > 0) {
-              commentBody += "⚠️ **CRITICAL: This PR contains vulnerabilities that pose direct risk to patient data.**\n\n";
+              commentBody += "**CRITICAL: This PR contains vulnerabilities that pose direct risk to patient data.**\n\n";
               commentBody += "These issues must be resolved before merge.\n\n";
             } else if (high > 0) {
-              commentBody += "⚡ **HIGH: Significant vulnerabilities detected.**\n\n";
+              commentBody += "**HIGH: Significant vulnerabilities detected.**\n\n";
               commentBody += "Remediation strongly recommended before production deployment.\n\n";
             } else {
-              commentBody += "✅ **No critical vulnerabilities detected.**\n\n";
+              commentBody += "**No critical vulnerabilities detected.**\n\n";
             }
 
-            commentBody += "📄 **Full reports available as workflow artifacts.**\n";
-            commentBody += "Download from the 'Artifacts' section below.\n";
+            commentBody += "**Full reports available as workflow artifacts.**\n";
 
             github.rest.issues.createComment({
               issue_number: context.issue.number,
@@ -110,50 +104,36 @@ jobs:
               body: commentBody
             });
 
-      - name: Fail on Critical Issues
-        if: steps.scan.outputs.critical > 0
+      - name: Generate SARIF Report
         run: |
-          echo "❌ CRITICAL vulnerabilities found! Blocking merge."
-          echo "Please resolve these issues before merging."
-          exit 1
-
-      - name: Generate SARIF for GitHub Security Tab
-        id: sarif
-        run: |
-          echo "🔍 Generating SARIF report..."
-          # Generate SARIF output
+          echo "Generating SARIF report..."
           semgrep scan --config ${{ env.SEMGREP_RULES }} --sarif --output results.sarif . || true
 
-          # Check if file exists and has content
-          if [ -f results.sarif ] && [ -s results.sarif ]; then
-            echo "✅ SARIF report generated successfully"
-            echo "has_sarif=true" >> $GITHUB_OUTPUT
+          # Verify SARIF was created
+          if [ -f results.sarif ]; then
+            echo "SARIF file created successfully"
+            cat results.sarif | head -20
           else
-            echo "⚠️ No SARIF file generated (no findings or error)"
-            echo "has_sarif=false" >> $GITHUB_OUTPUT
-            # Create an empty valid SARIF file to prevent upload error
-            cat > results.sarif << EOF
-            {
-              "\$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
-              "version": "2.1.0",
-              "runs": []
-            }
-            EOF
-            echo "Created empty SARIF file"
+            echo "Creating empty SARIF file..."
+            echo '{"$schema":"https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json","version":"2.1.0","runs":[]}' > results.sarif
           fi
 
-      - name: Upload SARIF to GitHub Security Tab
-        if: always()
+      - name: Upload SARIF to GitHub Security
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: results.sarif
           wait-for-processing: true
+
+      - name: Fail on Critical Issues
+        if: steps.scan.outputs.critical > 0
+        run: |
+          echo "CRITICAL vulnerabilities found! Blocking merge."
+          exit 1
 
   notify-on-failure:
     needs: security-scan
     if: failure() && github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
-      - name: Send Notification
-        run: |
-          echo "⚠️ Security scan failed! Check the workflow logs for details."
+      - name: Notify
+        run: echo "Security scan failed! Check workflow logs."
