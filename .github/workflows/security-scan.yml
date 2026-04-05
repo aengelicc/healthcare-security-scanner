@@ -40,21 +40,21 @@ jobs:
         run: |
           echo "=== Files in Repository ==="
           find . -type f -name "*.py" | head -20
+          echo ""
           echo "=== Rules File ==="
           ls -la healthcare_rules.yaml
+          echo ""
           echo "=== Requirements ==="
           ls -la requirements.txt
 
       - name: Validate Semgrep Rules
         run: |
           echo "Validating rules..."
-          semgrep validate healthcare_rules.yaml || {
-            echo "WARNING: Rule validation failed, but continuing..."
-          }
+          semgrep validate healthcare_rules.yaml || echo "WARNING: Rule validation failed, but continuing..."
 
       - name: Run Security Scan
         id: scan
-        continue-on-error: true  # Don't fail the job if scan fails
+        continue-on-error: true
         run: |
           echo "Running security scan..."
           python scanner.py . --output ${{ env.SCAN_OUTPUT }} --format both
@@ -64,7 +64,6 @@ jobs:
             exit 1
           fi
 
-          # Count findings
           echo "Counting findings..."
           JSON_OUTPUT=$(semgrep scan --config ${{ env.SEMGREP_RULES }} --json . 2>/dev/null || echo '{"results":[]}')
           FINDINGS=$$(echo "$$JSON_OUTPUT" | jq '.results | length' 2>/dev/null || echo "0")
