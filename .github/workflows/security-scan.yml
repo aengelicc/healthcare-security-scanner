@@ -1,4 +1,4 @@
-﻿name: Healthcare Security Scan
+name: Healthcare Security Scan
 
 on:
   push:
@@ -28,22 +28,35 @@ jobs:
           python-version: '3.11'
 
       - name: Install Dependencies
+        # Pin all versions to reduce supply-chain risk.
+        # Update pins deliberately after testing; do not use unpinned installs
+        # in a security-scanning pipeline.
         run: |
           python -m pip install --upgrade pip
-          pip install semgrep python-docx reportlab PyGithub jq
-
-      - name: List Files
-        run: |
-          echo "Files in repository:"
-          ls -la
+          pip install \
+            semgrep==1.86.0 \
+            python-docx==1.1.2 \
+            reportlab==4.2.5 \
+            PyGithub==2.4.0
 
       - name: Run Security Scan
         id: scan
+        # GITHUB_TOKEN is injected automatically by Actions — never pass tokens
+        # as CLI arguments (they appear in logs and ps output).
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           python scanner.py . --output security_report --format both
-          echo "Scan completed"
+          echo "scan_exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Check for Critical Findings
+        # Runs scanner in check-only mode to gate the pipeline.
+        # --fail-on-critical causes scanner.py to exit 1 if criticals exist.
+        run: |
+          python scanner.py . --output /dev/null --format pdf --fail-on-critical
 
       - name: Upload Reports
+        if: always()  # Upload even if the critical check fails so reviewers can see the report
         uses: actions/upload-artifact@v4
         with:
           name: security-reports
@@ -53,13 +66,26 @@ jobs:
           retention-days: 30
 
       - name: Generate SARIF
+        # Do NOT use '|| true' — a non-zero exit from semgrep scan indicates a
+        # real problem (broken rules file, scan error) that should surface in CI.
+        # We only suppress exit code 1 (findings exist), not exit code 2+ (errors).
         run: |
-          semgrep scan --config healthcare_rules.yaml --sarif --output results.sarif . || true
+          semgrep scan \
+            --config ${{ env.SEMGREP_RULES }} \
+            --sarif \
+            --output results.sarif \
+            . \
+          || EXIT=$?; \
+          if [ "${EXIT:-0}" -ge 2 ]; then
+            echo "Semgrep encountered an error (exit $EXIT). Check rules file and scan config."
+            exit $EXIT
+          fi
           if [ ! -f results.sarif ]; then
             echo '{"version":"2.1.0","runs":[]}' > results.sarif
           fi
 
       - name: Upload SARIF
+        if: always()
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: results.sarif
